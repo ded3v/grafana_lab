@@ -1,112 +1,75 @@
-# Define os serviços que compõem a infraestrutura
 services:
-  # Aplicação principal desenvolvida em Python com Flask
   carnivorous-garden:
-
-    # Configuração para construção da imagem Docker
     build:
-      context: .  # Diretório utilizado como contexto de construção (o atual)
-      dockerfile: # Nome do arquivo responsável pela construção da imagem
-
-    # Define um nome personalizado para o container
-    container_name:
-
-    # Configura o mapeamento de portas entre host e container
+      context: .
+      dockerfile: Dockerfile
+    container_name: carnivorous-garden
     ports:
-      -
-
-    # Compartilha arquivos entre a máquina host e o container
-    # A aplicação deverá disponibilizar seus logs para o Alloy através da pasta logs/app.log
+      - "5005:5005"
     volumes:
-      -
-
-    # Conecta o serviço à rede interna da infraestrutura
+      - ./logs:/app/logs
     networks:
       - loki
+    restart: unless-stopped
 
-    # Define a política de reinicialização do container
-    restart: 
-
-
-  # Serviço responsável pela coleta e encaminhamento dos logs
   alloy:
-
-    # Imagem oficial do Grafana Alloy
-    image:
-
-    # Disponibiliza a interface web de gerenciamento do Alloy
+    image: grafana/alloy:latest
     ports:
-      -
-
-    # Compartilha o arquivo de configuração e os logs da aplicação
+      - "12345:12345"
     volumes:
-      -
-      -
-
-    # Define o comando de inicialização e o caminho do arquivo de configuração
+      - ./alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/tmp/app-logs:ro
     command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
-
-    # Define os serviços que precisam ser iniciados antes do Alloy
     depends_on:
-      -
-      -
-
+      - carnivorous-garden
+      - loki
     networks:
       - loki
 
-
-  # Serviço responsável pelo armazenamento e consulta dos logs
   loki:
-
-    # Imagem oficial do Grafana Loki
-    image:
-
-    # Disponibiliza a API HTTP do Loki
+    image: grafana/loki:latest
+    # Executa como root apenas neste laboratorio local para permitir escrita no volume
+    user: "0"
     ports:
-      -
-
-    # Compartilha o arquivo de configuração e os dados armazenados
+      - "3100:3100"
     volumes:
-      -
-
-    # Define o arquivo de configuração utilizado pelo Loki
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/tmp/loki
     command: -config.file=/etc/loki/local-config.yaml
-
     networks:
       - loki
 
-
-  # Serviço responsável pela visualização e análise dos dados
   grafana:
-
-    # Imagem oficial do Grafana
-    image:
-
-    # Configurações de autenticação e acesso
+    image: grafana/grafana:latest
     environment:
-      # Define o papel dos usuários anônimos
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-
-      # Habilita o acesso sem autenticação
       - GF_AUTH_ANONYMOUS_ENABLED=true
-
-      # Desabilita a autenticação básica
       - GF_AUTH_BASIC_ENABLED=false
-
-    # Disponibiliza a interface web do Grafana
     ports:
-      -
-
-    # Configurar o provisionamento automático da fonte de dados Loki.
-    # Pesquise como utilizar entrypoint, Shell e heredoc (EOF)
-    # para criar o arquivo de configuração automaticamente.
+      - "3000:3000"
+    depends_on:
+      - loki
     entrypoint:
-
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat > /etc/grafana/provisioning/datasources/loki.yml <<'EOF'
+        apiVersion: 1
+        datasources:
+          - name: Loki
+            type: loki
+            access: proxy
+            url: http://loki:3100
+            isDefault: true
+        EOF
+        exec /run.sh
     networks:
       - loki
 
-# Define a rede interna compartilhada pelos serviços
 networks:
   loki:
-    # Utiliza o driver bridge para comunicação entre containers
     driver: bridge
+
+volumes:
+  loki-data:
